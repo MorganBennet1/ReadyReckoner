@@ -351,20 +351,26 @@ merge_bom_depth_exports <- function(parts) {
 #' Returns a list:
 #'   $entries - list of list(label=, ifd=, source_file=)
 #'   $notes   - character vector of warnings/info (e.g. a file that failed
-#'              to parse, or was skipped as not needed) to surface to the user
+#'              to parse, or a site with incomplete coverage) to surface to
+#'              the user. Kept short even for very large uploads (hundreds+
+#'              of files): skipped Intensity/Coefficients files are rolled
+#'              up into a single count rather than listed one by one (their
+#'              filenames aren't actionable), and any other note category is
+#'              capped at a handful of lines with a "...and N more" tail.
 build_ifd_registry <- function(file_names, file_paths) {
   n <- length(file_names)
-  notes <- character(0)
+  parse_error_notes <- character(0)
+  skip_counts <- c(coefficients = 0L, intensity = 0L)
   parsed <- list()
 
   for (i in seq_len(n)) {
     ifd <- tryCatch(parse_bom_ifd_csv(file_paths[i]), error = function(e) e)
     if (inherits(ifd, "error")) {
-      notes <- c(notes, sprintf("Could not read '%s': %s", file_names[i], conditionMessage(ifd)))
+      parse_error_notes <- c(parse_error_notes, sprintf("Could not read '%s': %s", file_names[i], conditionMessage(ifd)))
       next
     }
     if (ifd$data_type %in% c("coefficients", "intensity")) {
-      notes <- c(notes, sprintf("Skipped '%s' (%s data isn't needed by this tool).", file_names[i], ifd$data_type))
+      skip_counts[ifd$data_type] <- skip_counts[ifd$data_type] + 1L
       next
     }
     ifd$source_file <- file_names[i]
@@ -391,12 +397,14 @@ build_ifd_registry <- function(file_names, file_paths) {
   keys <- vapply(parsed, site_key, character(1))
   entries <- list()
   labels_used <- character(0)
+  partial_notes <- character(0)
+  merge_error_notes <- character(0)
 
   for (key in unique(keys)) {
     group <- parsed[keys == key]
 
     if (length(group) == 1 && group[[1]]$range %in% c("very_frequent", "frequent", "ifd", "rare")) {
-      notes <- c(notes, sprintf(
+      partial_notes <- c(partial_notes, sprintf(
         "'%s' looks like only part of this site's data (a '%s' range file on its own) -- upload its matching Very Frequent / IFD / Rare Depth files too for full coverage.",
         group[[1]]$source_file, group[[1]]$range
       ))
@@ -408,7 +416,7 @@ build_ifd_registry <- function(file_names, file_paths) {
 
     if (inherits(ifd, "error")) {
       files_desc <- paste(vapply(group, function(p) p$source_file, character(1)), collapse = ", ")
-      notes <- c(notes, sprintf("Could not combine %s: %s", files_desc, conditionMessage(ifd)))
+      merge_error_notes <- c(merge_error_notes, sprintf("Could not combine %s: %s", files_desc, conditionMessage(ifd)))
       next
     }
 
@@ -427,6 +435,30 @@ build_ifd_registry <- function(file_names, file_paths) {
     source_files <- paste(vapply(group, function(p) p$source_file, character(1)), collapse = ", ")
     entries[[length(entries) + 1]] <- list(label = label, ifd = ifd, source_file = source_files)
   }
+
+  # Cap any one category of note at a handful of lines, so a batch of
+  # hundreds/thousands of files can't turn the status panel into an
+  # unreadable wall of text -- the count itself is shown even when the
+  # detail is truncated.
+  cap_notes <- function(items, max_items = 8) {
+    if (length(items) <= max_items) return(items)
+    c(items[seq_len(max_items)], sprintf("...and %d more.", length(items) - max_items))
+  }
+
+  notes <- character(0)
+  if (skip_counts["coefficients"] > 0) {
+    notes <- c(notes, sprintf(
+      "Skipped %d Coefficients file%s (not needed by this tool).",
+      skip_counts["coefficients"], if (skip_counts["coefficients"] == 1) "" else "s"
+    ))
+  }
+  if (skip_counts["intensity"] > 0) {
+    notes <- c(notes, sprintf(
+      "Skipped %d Intensity file%s (not needed by this tool).",
+      skip_counts["intensity"], if (skip_counts["intensity"] == 1) "" else "s"
+    ))
+  }
+  notes <- c(notes, cap_notes(parse_error_notes), cap_notes(partial_notes), cap_notes(merge_error_notes))
 
   list(entries = entries, notes = notes)
 }
