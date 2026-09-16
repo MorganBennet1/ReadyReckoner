@@ -224,124 +224,41 @@ ifd_duration_min_for <- function(ifd, duration_label) {
 }
 
 # ---------------------------------------------------------------------------
-# Multi-site support: a site-locations CSV + a batch of per-site BoM IFD CSVs
+# Multi-site support: a batch of per-site BoM IFD CSVs
 # ---------------------------------------------------------------------------
 
-#' Parse a site-locations CSV: one row per site, with a site name/ID column
-#' and latitude/longitude columns. Column names are matched case-insensitively
-#' against common variants (e.g. "Site"/"Site Name"/"Name", "Lat"/"Latitude").
-parse_site_list_csv <- function(path) {
-  df <- read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
-  names(df) <- trimws(names(df))
-  lower_names <- tolower(names(df))
-
-  find_col <- function(candidates) {
-    idx <- which(lower_names %in% candidates)[1]
-    if (is.na(idx)) NA_character_ else names(df)[idx]
-  }
-  site_col <- find_col(c("site", "site name", "sitename", "site id", "name", "location", "location label"))
-  lat_col <- find_col(c("latitude", "lat"))
-  lon_col <- find_col(c("longitude", "long", "lon", "lng"))
-
-  missing <- c("site name" = is.na(site_col), "latitude" = is.na(lat_col), "longitude" = is.na(lon_col))
-  if (any(missing)) {
-    stop(
-      "Site list CSV is missing a column for: ", paste(names(missing)[missing], collapse = ", "),
-      ". Expected columns like 'Site', 'Latitude', 'Longitude'."
-    )
-  }
-
-  data.frame(
-    site = trimws(as.character(df[[site_col]])),
-    latitude = suppressWarnings(as.numeric(df[[lat_col]])),
-    longitude = suppressWarnings(as.numeric(df[[lon_col]])),
-    stringsAsFactors = FALSE
-  )
-}
-
-#' Normalise a name for fuzzy filename<->site matching: lowercase, strip
-#' anything that isn't a letter or digit (so "Site A", "site_a", "SiteA.csv"
-#' all normalise to the same token).
-.normalise_name <- function(s) gsub("[^a-z0-9]", "", tolower(s))
-
 #' Build a registry of {site label -> parsed IFD table} from a batch of
-#' uploaded BoM IFD CSVs, optionally matched against a site-locations table
-#' by filename (case/punctuation-insensitive substring match, exact match
-#' preferred). If no site list is supplied, or a file doesn't match any
-#' site, that file is still included, labelled from its own embedded
-#' metadata (location label, or coordinates, or filename) rather than
-#' dropped -- so a batch upload never silently loses a site.
+#' uploaded BoM IFD CSVs. Each file is labelled from its own embedded
+#' metadata -- the "Location Label:" row if the BoM export set one,
+#' otherwise its embedded coordinates, otherwise its filename -- so no
+#' separate site-locations file is needed; every uploaded file just
+#' becomes a site.
 #'
 #' `file_names` and `file_paths` are parallel vectors (as produced by a
 #' Shiny multi-file `fileInput`: `input$ifd_files$name` / `$datapath`).
-#' `sites_df` is the result of `parse_site_list_csv()`, or NULL.
 #'
 #' Returns a list:
-#'   $entries       - list of list(label=, ifd=, source_file=)
-#'   $notes         - character vector of warnings (ambiguous/unmatched
-#'                    files, coordinate mismatches) to surface to the user
-#'   $missing_sites - site names in sites_df with no matched file
-build_ifd_registry <- function(file_names, file_paths, sites_df = NULL) {
+#'   $entries - list of list(label=, ifd=, source_file=)
+#'   $notes   - character vector of warnings (e.g. a file that failed to
+#'              parse) to surface to the user
+build_ifd_registry <- function(file_names, file_paths) {
   n <- length(file_names)
   notes <- character(0)
-  matched_site_idx <- rep(NA_integer_, n)
-
-  has_sites <- !is.null(sites_df) && nrow(sites_df) > 0
-  if (has_sites) {
-    stems <- .normalise_name(tools::file_path_sans_ext(file_names))
-    site_norm <- .normalise_name(sites_df$site)
-    for (i in seq_len(n)) {
-      exact <- which(site_norm == stems[i])
-      if (length(exact) == 1) {
-        matched_site_idx[i] <- exact
-        next
-      }
-      candidates <- which(nchar(site_norm) > 0 &
-        (mapply(function(sn) grepl(sn, stems[i], fixed = TRUE), site_norm) |
-         mapply(function(sn) grepl(stems[i], sn, fixed = TRUE), site_norm)))
-      if (length(candidates) == 1) {
-        matched_site_idx[i] <- candidates
-      } else if (length(candidates) > 1) {
-        notes <- c(notes, sprintf(
-          "'%s' matches more than one site by filename (%s) - rename the file so it matches only one.",
-          file_names[i], paste(sites_df$site[candidates], collapse = ", ")
-        ))
-      } else {
-        notes <- c(notes, sprintf(
-          "'%s' doesn't match any site name in the site list by filename - it will still be loaded, labelled from its own data.",
-          file_names[i]
-        ))
-      }
-    }
-  }
-
   entries <- list()
   labels_used <- character(0)
+
   for (i in seq_len(n)) {
     ifd <- tryCatch(parse_bom_ifd_csv(file_paths[i]), error = function(e) e)
     if (inherits(ifd, "error")) {
       notes <- c(notes, sprintf("Could not read '%s': %s", file_names[i], conditionMessage(ifd)))
       next
     }
-    if (has_sites && !is.na(matched_site_idx[i])) {
-      site_row <- sites_df[matched_site_idx[i], ]
-      label <- site_row$site
-      if (!is.na(ifd$latitude) && !is.na(ifd$longitude) && !is.na(site_row$latitude) && !is.na(site_row$longitude)) {
-        if (abs(ifd$latitude - site_row$latitude) > 0.5 || abs(ifd$longitude - site_row$longitude) > 0.5) {
-          notes <- c(notes, sprintf(
-            "'%s': the site list's coordinate for %s (%.3f, %.3f) is more than 0.5 deg from the coordinate embedded in the file (%.3f, %.3f) - double check this is the right file.",
-            file_names[i], label, site_row$latitude, site_row$longitude, ifd$latitude, ifd$longitude
-          ))
-        }
-      }
+    label <- if (!is.null(ifd$location_label) && nzchar(ifd$location_label)) {
+      ifd$location_label
+    } else if (!is.na(ifd$latitude) && !is.na(ifd$longitude)) {
+      sprintf("%.4f, %.4f", ifd$latitude, ifd$longitude)
     } else {
-      label <- if (!is.null(ifd$location_label) && nzchar(ifd$location_label)) {
-        ifd$location_label
-      } else if (!is.na(ifd$latitude) && !is.na(ifd$longitude)) {
-        sprintf("%.4f, %.4f", ifd$latitude, ifd$longitude)
-      } else {
-        tools::file_path_sans_ext(file_names[i])
-      }
+      tools::file_path_sans_ext(file_names[i])
     }
     if (label %in% labels_used) {
       label <- sprintf("%s (%s)", label, file_names[i])
@@ -350,19 +267,7 @@ build_ifd_registry <- function(file_names, file_paths, sites_df = NULL) {
     entries[[length(entries) + 1]] <- list(label = label, ifd = ifd, source_file = file_names[i])
   }
 
-  missing_sites <- character(0)
-  if (has_sites) {
-    matched_names <- sites_df$site[stats::na.omit(matched_site_idx)]
-    missing_sites <- setdiff(sites_df$site, matched_names)
-    if (length(missing_sites) > 0) {
-      notes <- c(notes, sprintf(
-        "No uploaded file matched: %s. Those sites won't appear in the Site list below.",
-        paste(missing_sites, collapse = ", ")
-      ))
-    }
-  }
-
-  list(entries = entries, notes = notes, missing_sites = missing_sites)
+  list(entries = entries, notes = notes)
 }
 
 # ---------------------------------------------------------------------------
