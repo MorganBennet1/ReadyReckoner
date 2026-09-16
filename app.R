@@ -41,6 +41,30 @@ ui <- fluidPage(
     .status-panel ul { margin: 0.25rem 0 0 0; padding-left: 1.2rem; }
     footer.app-footer { margin-top: 2rem; font-size: 0.8rem; color: #778; }
   "))),
+  tags$script(HTML("
+    // 'Choose a whole folder' convenience: a plain (non-Shiny) hidden file
+    // input with webkitdirectory picks every file in a chosen folder, then
+    // this hands that FileList to the real fileInput (#ifd_files) as if the
+    // user had selected those files directly, so no server-side code needs
+    // to know this path exists. Filtered to .csv up front so OS clutter
+    // (Thumbs.db, .DS_Store, a stray README) in the folder doesn't get
+    // uploaded and reported as an unreadable file.
+    $(document).on('click', '#ifd_folder_trigger', function (e) {
+      e.preventDefault();
+      document.getElementById('ifd_folder_input').click();
+    });
+    $(document).on('change', '#ifd_folder_input', function () {
+      var csvFiles = Array.prototype.filter.call(this.files, function (f) {
+        return /\\.csv$/i.test(f.name);
+      });
+      if (csvFiles.length === 0) return;
+      var dt = new DataTransfer();
+      csvFiles.forEach(function (f) { dt.items.add(f); });
+      var target = document.getElementById('ifd_files');
+      target.files = dt.files;
+      $(target).trigger('change');
+    });
+  ")),
   titlePanel("ARR Ready Reckoner - Climate-Adjusted Design Rainfall"),
   p(
     "Reproduces the DCCEEW / Australian Rainfall and Runoff (ARR v4.2) climate-change ",
@@ -56,12 +80,15 @@ ui <- fluidPage(
       conditionalPanel(
         condition = "!input.use_example",
         fileInput("ifd_files", "BoM design rainfall CSV(s)", accept = ".csv", multiple = TRUE),
+        tags$input(id = "ifd_folder_input", type = "file", webkitdirectory = NA, directory = NA, multiple = NA, style = "display:none;"),
+        tags$a(id = "ifd_folder_trigger", href = "#", "Or choose a whole folder instead", style = "font-size: 0.85rem;"),
         p(
           "Drop in a whole downloaded set at once - a single all-in-one CSV per site, ",
           "or BoM's current 'Very Frequent' / 'IFD' / 'Rare' split (Depth files only; ",
           "Intensity and Coefficients files are recognised and skipped automatically). ",
           "Files for the same site are matched up by their own embedded location and ",
-          "combined, no matter how they're named - just upload everything.",
+          "combined, no matter how they're named - just upload everything, or (in ",
+          "Chrome/Edge/Firefox) pick the folder they're all sitting in instead.",
           class = "muted"
         )
       ),
