@@ -55,10 +55,13 @@ ui <- fluidPage(
       checkboxInput("use_example", "Use bundled single-site example (Tasmania)", value = TRUE),
       conditionalPanel(
         condition = "!input.use_example",
-        fileInput("ifd_files", "BoM IFD CSV(s) - one file per site", accept = ".csv", multiple = TRUE),
+        fileInput("ifd_files", "BoM design rainfall CSV(s)", accept = ".csv", multiple = TRUE),
         p(
-          "Each file becomes a site in the list below, named from its own ",
-          "'Location Label' (or its coordinates, or its filename if neither is set).",
+          "Drop in a whole downloaded set at once - a single all-in-one CSV per site, ",
+          "or BoM's current 'Very Frequent' / 'IFD' / 'Rare' split (Depth files only; ",
+          "Intensity and Coefficients files are recognised and skipped automatically). ",
+          "Files for the same site are matched up by their own embedded location and ",
+          "combined, no matter how they're named - just upload everything.",
           class = "muted"
         )
       ),
