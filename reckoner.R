@@ -77,11 +77,11 @@ RATE_OF_CHANGE_UNCERTAINTY_OPTIONS <- c("Low (lower tercile)", "Central (median)
 
 AEP_TARGET_OPTIONS <- c("1 in 2", "1 in 5", "1 in 10", "1 in 20", "1 in 50", "1 in 100", "1 in 200", "1 in 500", "1 in 1000", "1 in 2000")
 
-# The first 5 IFD columns (12EY,6EY,4EY,3EY,2EY) are frequent, sub-annual events.
-# The ARR rate-of-change factors only apply from 0.632 AEP (~1 EY) and rarer --
-# there is "insufficient evidence" to scale the very frequent events, so the
-# spreadsheet (and this module) leaves them at their historical value.
-N_UNADJUSTED_LEADING_COLUMNS <- 5
+# The ARR rate-of-change factors only apply from 0.632 AEP (~1 EY, i.e.
+# ARI >= 1 year) and rarer -- there is "insufficient evidence" to scale more
+# frequent, sub-annual events, so the spreadsheet (and this module) leaves
+# them at their historical value. See compute_summary() below, which checks
+# this per-result from the fitted curve rather than a fixed column count.
 
 # Rounding precision applied to a climate-adjusted depth, matching the
 # spreadsheet's nested IF() in the "IFD climate change adjusted" sheet.
@@ -111,22 +111,66 @@ tiered_round <- function(value, col_index) {
 # BoM IFD CSV parsing
 # ---------------------------------------------------------------------------
 
+#' Classify a BoM 'design rainfalls' CSV export from its title line (line 3
+#' in every export seen so far), e.g. "Rare Design Rainfall Depth (mm)" or
+#' "Very Frequent Design Rainfall Coefficients". BoM's download now splits
+#' each site's data into several files: one per frequency *range* (Very
+#' Frequent / IFD / Rare) and, within each range, one per *data type*
+#' (Depth / Intensity / Coefficients) -- typically 9 files for one site.
+#' Only the Depth files are needed by this app; this classification lets a
+#' batch upload sort that out automatically instead of relying on filenames
+#' (which the user may have renamed).
+classify_bom_export <- function(lines) {
+  title <- if (length(lines) >= 3) trimws(lines[3]) else ""
+  title_lc <- tolower(title)
+  data_type <- if (grepl("coefficient", title_lc)) {
+    "coefficients"
+  } else if (grepl("intensity", title_lc)) {
+    "intensity"
+  } else if (grepl("depth", title_lc)) {
+    "depth"
+  } else {
+    "unknown"
+  }
+  range <- if (grepl("very frequent", title_lc)) {
+    "very_frequent"
+  } else if (grepl("^frequent", title_lc)) {
+    "frequent"
+  } else if (grepl("^rare", title_lc)) {
+    "rare"
+  } else if (grepl("^ifd", title_lc)) {
+    "ifd"
+  } else if (grepl("^all", title_lc)) {
+    "all"
+  } else {
+    "unknown"
+  }
+  list(title = title, data_type = data_type, range = range)
+}
+
 #' Parse a BoM 'design rainfalls' CSV export into an IfdTable (a list).
 #'
-#' This mirrors the layout the original spreadsheet's "BoM IFD-historical"
-#' sheet expects (as documented in its Explainer tab): a metadata block,
-#' then a header row whose first cell is literally "Duration" and second
-#' cell is "Duration in min", followed by 18 frequency columns (5 EY columns,
-#' then AEP-based columns from 0.632 AEP out to 1 in 2000), then one row per
-#' storm duration.
+#' Handles both layouts BoM has issued: the older single "All Design
+#' Rainfall Depth" export covering all 18 frequencies in one file, and the
+#' current split-by-range export (separate Very Frequent / IFD / Rare
+#' files). A file is identified by its title line (see classify_bom_export);
+#' Intensity and Coefficients files are recognised but not fully parsed
+#' (their table isn't needed and, for Coefficients, isn't even shaped like
+#' the Duration-by-frequency table below) -- they come back with an empty
+#' table and the caller (build_ifd_registry) skips them.
 #'
-#' Works for any location's exported CSV, not just a specific site -- the
-#' header row is located dynamically rather than assumed to be at a fixed
-#' row number, so minor variations in the metadata block are tolerated.
+#' For a Depth (or unrecognised) file, this mirrors the layout the original
+#' spreadsheet's "BoM IFD-historical" sheet expects: a metadata block, then
+#' a header row whose first cell is literally "Duration" and second cell is
+#' "Duration in min", followed by the frequency columns for that file, then
+#' one row per storm duration. The header row is located dynamically rather
+#' than assumed to be at a fixed row number, so minor variations in the
+#' metadata block are tolerated.
 parse_bom_ifd_csv <- function(path_or_connection) {
   lines <- readLines(path_or_connection, warn = FALSE, encoding = "UTF-8")
   # strip a UTF-8 BOM if present
   lines[1] <- sub("^\xef\xbb\xbf", "", lines[1])
+  cls <- classify_bom_export(lines)
 
   split_csv_line <- function(line) {
     # a simple CSV splitter; the BoM export has no embedded commas/quotes
@@ -143,6 +187,33 @@ parse_bom_ifd_csv <- function(path_or_connection) {
     r[is.na(r)] <- ""
     r
   })
+
+  # metadata (best-effort; not required for calculations). Scanned up front
+  # (rather than "everything above the header row") so it's still picked up
+  # for Coefficients files, which return before a header row is looked for.
+  location_label <- NULL
+  latitude <- longitude <- NA_real_
+  for (i in seq_len(min(length(rows), 10))) {
+    c0 <- trimws(tolower(rows[[i]][1]))
+    if (identical(c0, "location label:") && width > 1 && nzchar(trimws(rows[[i]][2]))) {
+      location_label <- trimws(rows[[i]][2])
+    }
+    if (identical(c0, "requested coordinate:")) {
+      lat <- suppressWarnings(as.numeric(rows[[i]][3]))
+      lon <- suppressWarnings(as.numeric(rows[[i]][5]))
+      if (!is.na(lat)) latitude <- lat
+      if (!is.na(lon)) longitude <- lon
+    }
+  }
+
+  if (cls$data_type %in% c("coefficients", "intensity")) {
+    return(list(
+      title = cls$title, data_type = cls$data_type, range = cls$range,
+      location_label = location_label, latitude = latitude, longitude = longitude,
+      columns = character(0), durations = character(0), duration_minutes = numeric(0),
+      depths = matrix(numeric(0), nrow = 0, ncol = 0)
+    ))
+  }
 
   header_row_idx <- NA_integer_
   for (i in seq_along(rows)) {
@@ -166,24 +237,6 @@ parse_bom_ifd_csv <- function(path_or_connection) {
   columns <- columns[columns != ""]
   n_cols <- length(columns)
 
-  # metadata (best-effort; not required for calculations)
-  location_label <- NULL
-  latitude <- longitude <- NA_real_
-  if (header_row_idx > 1) {
-    for (i in 1:(header_row_idx - 1)) {
-      c0 <- trimws(tolower(rows[[i]][1]))
-      if (identical(c0, "location label:") && width > 1 && nzchar(trimws(rows[[i]][2]))) {
-        location_label <- trimws(rows[[i]][2])
-      }
-      if (identical(c0, "requested coordinate:")) {
-        lat <- suppressWarnings(as.numeric(rows[[i]][3]))
-        lon <- suppressWarnings(as.numeric(rows[[i]][5]))
-        if (!is.na(lat)) latitude <- lat
-        if (!is.na(lon)) longitude <- lon
-      }
-    }
-  }
-
   durations <- character(0)
   duration_minutes <- numeric(0)
   depth_rows <- list()
@@ -205,6 +258,7 @@ parse_bom_ifd_csv <- function(path_or_connection) {
   rownames(depths) <- durations
 
   list(
+    title = cls$title, data_type = cls$data_type, range = cls$range,
     location_label = location_label,
     latitude = latitude,
     longitude = longitude,
@@ -227,25 +281,81 @@ ifd_duration_min_for <- function(ifd, duration_label) {
 # Multi-site support: a batch of per-site BoM IFD CSVs
 # ---------------------------------------------------------------------------
 
+#' Merge a group of same-site range-split BoM Depth exports (e.g. that
+#' site's "Very Frequent" + "IFD" + "Rare" Depth files) into a single
+#' IfdTable with the same shape parse_bom_ifd_csv() produces: one column
+#' per distinct frequency, ordered from most frequent (shortest ARI) to
+#' rarest (longest ARI). Adjacent files' frequency ranges overlap by one
+#' column each (e.g. the IFD file's "1EY"/"63.2%" column and the Rare
+#' file's "1 in 100" column can describe the very same event in different
+#' units) -- those are detected (by near-equal Average Recurrence Interval)
+#' and collapsed to a single column, so the result matches the classic
+#' single-file export's 18-column layout when all 3 ranges are supplied.
+merge_bom_depth_exports <- function(parts) {
+  ref <- parts[[1]]
+  for (p in parts[-1]) {
+    if (!identical(p$durations, ref$durations) ||
+        length(p$duration_minutes) != length(ref$duration_minutes) ||
+        !isTRUE(all.equal(p$duration_minutes, ref$duration_minutes))) {
+      stop(
+        "These files don't share the same set of storm durations -- make ",
+        "sure the Very Frequent / IFD / Rare Depth files you uploaded ",
+        "together are all exports for the same site."
+      )
+    }
+  }
+
+  all_labels <- unlist(lapply(parts, function(p) p$columns))
+  all_ari <- vapply(all_labels, function(l) column_ey_aep_ari(l)[["ARI"]], numeric(1))
+  all_values <- do.call(cbind, lapply(parts, function(p) p$depths))
+
+  # Two columns are treated as the same frequency if their ARI agrees to
+  # within 2 decimal places -- comfortably tighter than the spacing between
+  # any two genuinely distinct frequencies in these files, but loose enough
+  # to absorb the small rounding difference between (e.g.) an EY-derived
+  # ARI and the same event's AEP-derived ARI computed from a rounded "%"
+  # label such as "63.2%".
+  keep <- !duplicated(round(all_ari, 2))
+  order_idx <- order(all_ari[keep])
+
+  final_labels <- all_labels[keep][order_idx]
+  final_values <- all_values[, keep, drop = FALSE][, order_idx, drop = FALSE]
+  colnames(final_values) <- final_labels
+
+  list(
+    location_label = ref$location_label,
+    latitude = ref$latitude,
+    longitude = ref$longitude,
+    columns = final_labels,
+    durations = ref$durations,
+    duration_minutes = ref$duration_minutes,
+    depths = final_values
+  )
+}
+
 #' Build a registry of {site label -> parsed IFD table} from a batch of
-#' uploaded BoM IFD CSVs. Each file is labelled from its own embedded
-#' metadata -- the "Location Label:" row if the BoM export set one,
-#' otherwise its embedded coordinates, otherwise its filename -- so no
-#' separate site-locations file is needed; every uploaded file just
-#' becomes a site.
+#' uploaded BoM CSV exports. Understands both the older single "All Design
+#' Rainfall Depth" file (one file = one site) and the current split-by-
+#' range export (separate Very Frequent / IFD / Rare files, each also
+#' offered as Intensity / Coefficients variants -- typically 9 files per
+#' site in a downloaded zip). Intensity and Coefficients files are skipped
+#' (noted, not treated as errors) since this app only needs Depth; the
+#' Depth files belonging to one site are matched up by their shared
+#' embedded "Location Label" / coordinates (not by filename, so renaming
+#' files or dropping a whole zip's worth of files in at once both work) and
+#' merged into one combined table -- see merge_bom_depth_exports().
 #'
 #' `file_names` and `file_paths` are parallel vectors (as produced by a
 #' Shiny multi-file `fileInput`: `input$ifd_files$name` / `$datapath`).
 #'
 #' Returns a list:
 #'   $entries - list of list(label=, ifd=, source_file=)
-#'   $notes   - character vector of warnings (e.g. a file that failed to
-#'              parse) to surface to the user
+#'   $notes   - character vector of warnings/info (e.g. a file that failed
+#'              to parse, or was skipped as not needed) to surface to the user
 build_ifd_registry <- function(file_names, file_paths) {
   n <- length(file_names)
   notes <- character(0)
-  entries <- list()
-  labels_used <- character(0)
+  parsed <- list()
 
   for (i in seq_len(n)) {
     ifd <- tryCatch(parse_bom_ifd_csv(file_paths[i]), error = function(e) e)
@@ -253,18 +363,69 @@ build_ifd_registry <- function(file_names, file_paths) {
       notes <- c(notes, sprintf("Could not read '%s': %s", file_names[i], conditionMessage(ifd)))
       next
     }
+    if (ifd$data_type %in% c("coefficients", "intensity")) {
+      notes <- c(notes, sprintf("Skipped '%s' (%s data isn't needed by this tool).", file_names[i], ifd$data_type))
+      next
+    }
+    ifd$source_file <- file_names[i]
+    parsed[[length(parsed) + 1]] <- ifd
+  }
+
+  # Site grouping key: prefer the embedded Location Label, then embedded
+  # coordinates (both shared by every range-file for the same site), and
+  # only fall back to the filename (with a known range suffix stripped) for
+  # files with neither -- so grouping works even for a whole zip's worth of
+  # files dropped in at once, regardless of what they're named.
+  site_key <- function(p) {
+    if (!is.null(p$location_label) && nzchar(p$location_label)) {
+      return(paste0("label:", tolower(trimws(p$location_label))))
+    }
+    if (!is.na(p$latitude) && !is.na(p$longitude)) {
+      return(sprintf("coord:%.4f,%.4f", p$latitude, p$longitude))
+    }
+    stripped <- tools::file_path_sans_ext(p$source_file)
+    stripped <- sub("_(very_frequent|frequent|rare|ifds?|all)$", "", stripped, ignore.case = TRUE)
+    paste0("file:", tolower(stripped))
+  }
+
+  keys <- vapply(parsed, site_key, character(1))
+  entries <- list()
+  labels_used <- character(0)
+
+  for (key in unique(keys)) {
+    group <- parsed[keys == key]
+
+    if (length(group) == 1 && group[[1]]$range %in% c("very_frequent", "frequent", "ifd", "rare")) {
+      notes <- c(notes, sprintf(
+        "'%s' looks like only part of this site's data (a '%s' range file on its own) -- upload its matching Very Frequent / IFD / Rare Depth files too for full coverage.",
+        group[[1]]$source_file, group[[1]]$range
+      ))
+    }
+
+    ifd <- tryCatch({
+      if (length(group) == 1) group[[1]] else merge_bom_depth_exports(group)
+    }, error = function(e) e)
+
+    if (inherits(ifd, "error")) {
+      files_desc <- paste(vapply(group, function(p) p$source_file, character(1)), collapse = ", ")
+      notes <- c(notes, sprintf("Could not combine %s: %s", files_desc, conditionMessage(ifd)))
+      next
+    }
+
     label <- if (!is.null(ifd$location_label) && nzchar(ifd$location_label)) {
       ifd$location_label
     } else if (!is.na(ifd$latitude) && !is.na(ifd$longitude)) {
       sprintf("%.4f, %.4f", ifd$latitude, ifd$longitude)
     } else {
-      tools::file_path_sans_ext(file_names[i])
+      tools::file_path_sans_ext(group[[1]]$source_file)
     }
     if (label %in% labels_used) {
-      label <- sprintf("%s (%s)", label, file_names[i])
+      label <- sprintf("%s (%s)", label, group[[1]]$source_file)
     }
     labels_used <- c(labels_used, label)
-    entries[[length(entries) + 1]] <- list(label = label, ifd = ifd, source_file = file_names[i])
+
+    source_files <- paste(vapply(group, function(p) p$source_file, character(1)), collapse = ", ")
+    entries[[length(entries) + 1]] <- list(label = label, ifd = ifd, source_file = source_files)
   }
 
   list(entries = entries, notes = notes)
@@ -312,8 +473,11 @@ rate_of_change_multiplier <- function(duration_min, rate_uncertainty, delta_t) {
 # ---------------------------------------------------------------------------
 
 classify_column <- function(label) {
-  if (grepl("EY$", toupper(trimws(label)))) {
+  label <- trimws(label)
+  if (grepl("EY$", toupper(label))) {
     "EY"
+  } else if (grepl("%$", label)) {
+    "PCT"
   } else if (!is.na(suppressWarnings(as.numeric(label)))) {
     "AEP"
   } else {
@@ -321,7 +485,12 @@ classify_column <- function(label) {
   }
 }
 
-#' Return c(EY, AEP, ARI) for a frequency column header.
+#' Return c(EY, AEP, ARI) for a frequency column header. Column headers seen
+#' across BoM exports come in four shapes: "<n>EY" (Exceedances per Year,
+#' the older single-file export's leading columns), a bare decimal AEP
+#' fraction like "0.632" (also the older export), a percentage like "63.2%"
+#' (the current split-by-range export's IFD file), and "1 in <n>" (both
+#' exports' rarest columns).
 column_ey_aep_ari <- function(label) {
   kind <- classify_column(label)
   if (kind == "EY") {
@@ -331,6 +500,8 @@ column_ey_aep_ari <- function(label) {
   } else {
     if (kind == "AEP") {
       aep <- as.numeric(label)
+    } else if (kind == "PCT") {
+      aep <- as.numeric(sub("%$", "", trimws(label))) / 100
     } else {
       x <- as.numeric(trimws(gsub("1 in", "", label, fixed = TRUE)))
       aep <- 1 / x
@@ -429,7 +600,14 @@ compute_summary <- function(ifd, duration_label, target_aep_label,
 
   historical_depth <- curve$historical_depth[col_index]
 
-  if (col_index <= N_UNADJUSTED_LEADING_COLUMNS) {
+  # ARR: there is "insufficient evidence" to scale events more frequent
+  # than about 1 per year (ARI < 1 year, i.e. log10(ARI) < 0) for climate
+  # change, so those are left at their historical value. This is
+  # equivalent to the original spreadsheet's fixed "first 5 columns"
+  # (12EY..2EY all have ARI < 1) but works for any IFD table, including
+  # ones assembled from BoM's split-by-range exports where the number of
+  # very-frequent columns available can vary.
+  if (curve$log_ari[col_index] < 0) {
     projected_depth <- historical_depth  # too frequent to scale - insufficient evidence
   } else {
     projected_depth <- round_depth(historical_depth * roc$multiplier)
