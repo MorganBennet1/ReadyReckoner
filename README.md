@@ -9,10 +9,6 @@ Probability (AEP), it reports the historical depth/AEP, the climate-adjusted
 depth and % change, and the AEP that adjusted depth would represent under
 historical conditions.
 
-This implementation has been made solely using Claude AI. The Ready reckoner 
-spreadsheet was obtained and provided to Claude with the instructions to turn 
-into a Shiny app using R.
-
 ## Inputs
 
 Only one thing actually drives a result: **a site's BoM design rainfall
@@ -36,13 +32,20 @@ both, in any mixture, in one batch upload:
   one site's full frequency range in one file. Still supported as-is, one
   file per site.
 
-Upload one site's worth of files, or several sites' at once. Each site
-becomes one entry in the Site dropdown, labelled from its embedded
-"Location Label:" if it has one, otherwise from its embedded coordinates,
-otherwise from its filename. The status panel above the Site dropdown
-reports how many sites loaded and flags anything skipped, unparseable, or
-only partially uploaded (e.g. a Rare file with no matching Very Frequent /
-IFD files for the same site).
+Upload one site's worth of files, or several sites' (even hundreds of
+sites', in one go) at once -- either select the files themselves, or (in
+Chrome, Edge or Firefox) click "Or choose a whole folder instead" and pick
+the folder they're sitting in directly, which is usually less fiddly than
+selecting hundreds of individual files by hand. Each site becomes one entry
+in the Site dropdown, labelled from its embedded "Location Label:" if it
+has one, otherwise from its embedded coordinates, otherwise from its
+filename. The status panel above the Site dropdown reports how many sites
+loaded and flags anything skipped, unparseable, or only partially uploaded
+(e.g. a Rare file with no matching Very Frequent / IFD files for the same
+site) -- Intensity/Coefficients files being skipped is reported as a
+single count, not one line per file, so this stays readable even when
+you've uploaded thousands of files at once; other warnings are capped at a
+handful of lines with a "...and N more" tail for the same reason.
 
 See `data/split_export_example/` for a real example site's full 9-file
 current-layout download, and `data/multi_site_example/` for two example
