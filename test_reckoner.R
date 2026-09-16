@@ -86,8 +86,11 @@ reg <- build_ifd_registry(basename(split_files), split_files)
 
 merge_checks <- c(
   "exactly 1 site found" = length(reg$entries) == 1,
-  "6 non-Depth files skipped, 0 errors" = length(reg$notes) == 6 &&
-    all(grepl("isn't needed by this tool", reg$notes))
+  # 6 non-Depth files (3 Intensity + 3 Coefficients) rolled up into 2 count
+  # notes, not one line per file -- see build_ifd_registry's note-capping.
+  "6 non-Depth files skipped as 2 count notes, 0 errors" = length(reg$notes) == 2 &&
+    any(grepl("^Skipped 3 Coefficients files", reg$notes)) &&
+    any(grepl("^Skipped 3 Intensity files", reg$notes))
 )
 site <- reg$entries[[1]]
 ari <- vapply(site$ifd$columns, function(l) column_ey_aep_ari(l)[["ARI"]], numeric(1))
@@ -140,6 +143,38 @@ partial_ok <- length(partial_reg$entries) == 1 &&
   length(partial_reg$notes) == 1 && grepl("only part of this site's data", partial_reg$notes)
 cat(sprintf("%s merge: a lone range file registers with a partial-coverage note\n", if (partial_ok) "OK  " else "FAIL"))
 all_ok <- all_ok && partial_ok
+
+## A very large batch (hundreds/thousands of files, as a real multi-site zip
+## upload could be) should never turn the status panel into a wall of text:
+## Intensity/Coefficients skips collapse into one count note regardless of
+## how many files that is, and other note categories are capped with a
+## "...and N more" tail rather than listed in full.
+big_n <- 40
+big_names <- c(
+  rep("intensities_bulk.csv", big_n),
+  rep("coefficients_bulk.csv", big_n),
+  sprintf("unreadable_%d.csv", seq_len(big_n))
+)
+big_paths <- c(
+  rep(file.path(split_dir, "intensities_Zutic_M_A_Poultry_ifds.csv"), big_n),
+  rep(file.path(split_dir, "coefficients_Zutic_M_A_Poultry_ifds.csv"), big_n),
+  rep(tempfile(fileext = ".csv"), big_n)  # doesn't exist -> parse errors
+)
+big_reg <- suppressWarnings(build_ifd_registry(big_names, big_paths))
+big_ok <- c(
+  "0 sites (nothing usable uploaded)" = length(big_reg$entries) == 0,
+  "skip counts stay 2 lines regardless of file count" =
+    sum(grepl(sprintf("^Skipped %d Intensity files", big_n), big_reg$notes)) == 1 &&
+    sum(grepl(sprintf("^Skipped %d Coefficients files", big_n), big_reg$notes)) == 1,
+  "parse-error notes capped with a '...and N more' tail" =
+    any(grepl(sprintf("\\.\\.\\.and %d more\\.", big_n - 8), big_reg$notes)),
+  "total notes stay small even with 120 input files" = length(big_reg$notes) <= 11
+)
+for (nm in names(big_ok)) {
+  ok <- isTRUE(big_ok[[nm]])
+  all_ok <- all_ok && ok
+  cat(sprintf("%s merge: %s\n", if (ok) "OK  " else "FAIL", nm))
+}
 
 if (n_pass < length(cases) || !user_degrees_error || !all_ok) {
   quit(status = 1)
