@@ -6,11 +6,10 @@
 ## Usage:
 ##   - Upload one or more BoM design-rainfalls CSVs (from
 ##     http://www.bom.gov.au/water/designRainfalls/revised-ifd/) -- one file per
-##     site -- and, optionally, a site-locations CSV (Site, Latitude, Longitude)
-##     to give each site a friendly name and cross-check coordinates. Files are
-##     matched to sites by filename (e.g. "Site A.csv" matches a site list row
-##     "Site A"). Or leave the "use bundled example" box ticked to use the
-##     bundled single-site example data.
+##     site. Each file becomes a site, labelled from its own embedded location
+##     label (or coordinates, or filename if neither is present) -- there's no
+##     separate site list to maintain. Or leave the "use bundled example" box
+##     ticked to use the bundled single-site example data.
 ##   - Pick a site, a climate scenario (or specify degrees of warming directly),
 ##     a time horizon, uncertainty settings, a critical storm duration, and a
 ##     target AEP.
@@ -56,11 +55,10 @@ ui <- fluidPage(
       checkboxInput("use_example", "Use bundled single-site example (Tasmania)", value = TRUE),
       conditionalPanel(
         condition = "!input.use_example",
-        fileInput("site_list_file", "Site list CSV (optional) - columns: Site, Latitude, Longitude", accept = ".csv"),
         fileInput("ifd_files", "BoM IFD CSV(s) - one file per site", accept = ".csv", multiple = TRUE),
         p(
-          "Name each IFD file after its site (matching the site list's 'Site' ",
-          "column) so the two can be matched up, e.g. 'Site A.csv'.",
+          "Each file becomes a site in the list below, named from its own ",
+          "'Location Label' (or its coordinates, or its filename if neither is set).",
           class = "muted"
         )
       ),
@@ -107,29 +105,18 @@ ui <- fluidPage(
 server <- function(input, output, session) {
 
   # A registry of {label -> parsed IFD table}, built either from the bundled
-  # single-site example, or from the uploaded site list + batch of per-site
-  # BoM IFD CSVs.
+  # single-site example, or from the uploaded batch of per-site BoM IFD CSVs.
   registry <- reactive({
     if (isTRUE(input$use_example)) {
       ifd <- parse_bom_ifd_csv(EXAMPLE_IFD_PATH)
       return(list(
         entries = list(list(label = "Tasmania example", ifd = ifd, source_file = EXAMPLE_IFD_PATH)),
-        notes = character(0),
-        missing_sites = character(0)
+        notes = character(0)
       ))
     }
 
     req(input$ifd_files)
-
-    sites_df <- NULL
-    if (!is.null(input$site_list_file)) {
-      sites_df <- tryCatch(parse_site_list_csv(input$site_list_file$datapath), error = function(e) e)
-      if (inherits(sites_df, "error")) {
-        return(list(entries = list(), notes = paste("Site list CSV:", conditionMessage(sites_df)), missing_sites = character(0)))
-      }
-    }
-
-    build_ifd_registry(input$ifd_files$name, input$ifd_files$datapath, sites_df = sites_df)
+    build_ifd_registry(input$ifd_files$name, input$ifd_files$datapath)
   })
 
   output$data_status <- renderUI({
