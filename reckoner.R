@@ -30,32 +30,77 @@
 # ---------------------------------------------------------------------------
 
 # ARR v4.2 Table 1.6.2 - degrees of global warming relative to the 1961-1990
-# baseline, for each SSP scenario / time horizon / percentile.
+# baseline, for each SSP scenario / time horizon / percentile. The original
+# 3 ARR time horizons ("Current and near-term (2021-2040)", "Medium-term
+# (2041-2060)", "Long-term (2081-2100)") are left exactly as published.
+#
+# 5 additional rolling 20-year windows ("2011-2030", "2031-2050",
+# "2051-2070", "2061-2080", "2071-2090") were added on 2026-09-17, at
+# Morgan's request for finer time-horizon coverage. These are *not* from
+# the ARR table (ARR only ever published the 3 above) -- they were derived
+# from the same underlying assessment ARR's own table is built on: the
+# IPCC AR6 WG1 Chapter 4 "assessed GSAT projections" dataset
+# (https://github.com/IPCC-WG1/Chapter-4_Figure4.11), which publishes
+# exactly these rolling 20-year-mean windows (Q05/Q50/Q95) per SSP,
+# relative to a 1995-2014 baseline. To slot into this table on the same
+# 1961-1990 basis as ARR's 3 original entries, each raw window value was
+# shifted by a constant baseline-conversion offset per percentile (5th:
+# +0.50 degC, median: +0.56 degC, 95th: +0.59 degC) -- these offsets were
+# not assumed, they were *fitted* by comparing the raw dataset's own
+# 2021-2040 / 2041-2060 / 2081-2100 windows against ARR's already-published
+# values for those same 3 periods (36 data points across all 4 scenarios x
+# 3 percentiles), which matched a single per-percentile additive constant
+# to within 0.06 degC everywhere (well inside the table's own 0.1 degC
+# rounding) -- i.e. the fit reproduces ARR's own numbers almost exactly,
+# which is what justifies applying the same offset to the 5 new windows.
+# See the project doc for the fitting workflow and full residual table.
 TEMPERATURE_PROJECTIONS <- list(
   "SSP1-2.6" = list(
+    "2011-2030"                         = c("5th percentile" = 0.8, "median" = 1.0, "95th percentile" = 1.2),
     "Current and near-term (2021-2040)" = c("5th percentile" = 0.9, "median" = 1.2, "95th percentile" = 1.5),
+    "2031-2050"                         = c("5th percentile" = 1.0, "median" = 1.3, "95th percentile" = 1.7),
     "Medium-term (2041-2060)"           = c("5th percentile" = 1.0, "median" = 1.4, "95th percentile" = 1.9),
+    "2051-2070"                         = c("5th percentile" = 1.1, "median" = 1.5, "95th percentile" = 2.0),
+    "2061-2080"                         = c("5th percentile" = 1.1, "median" = 1.5, "95th percentile" = 2.0),
+    "2071-2090"                         = c("5th percentile" = 1.0, "median" = 1.5, "95th percentile" = 2.1),
     "Long-term (2081-2100)"             = c("5th percentile" = 1.0, "median" = 1.5, "95th percentile" = 2.1)
   ),
   "SSP2-4.5" = list(
+    "2011-2030"                         = c("5th percentile" = 0.8, "median" = 1.0, "95th percentile" = 1.2),
     "Current and near-term (2021-2040)" = c("5th percentile" = 0.9, "median" = 1.2, "95th percentile" = 1.5),
+    "2031-2050"                         = c("5th percentile" = 1.1, "median" = 1.4, "95th percentile" = 1.8),
     "Medium-term (2041-2060)"           = c("5th percentile" = 1.3, "median" = 1.7, "95th percentile" = 2.2),
+    "2051-2070"                         = c("5th percentile" = 1.4, "median" = 1.9, "95th percentile" = 2.5),
+    "2061-2080"                         = c("5th percentile" = 1.5, "median" = 2.1, "95th percentile" = 2.7),
+    "2071-2090"                         = c("5th percentile" = 1.7, "median" = 2.2, "95th percentile" = 3.0),
     "Long-term (2081-2100)"             = c("5th percentile" = 1.8, "median" = 2.4, "95th percentile" = 3.2)
   ),
   "SSP3-7.0" = list(
+    "2011-2030"                         = c("5th percentile" = 0.8, "median" = 1.0, "95th percentile" = 1.1),
     "Current and near-term (2021-2040)" = c("5th percentile" = 0.9, "median" = 1.2, "95th percentile" = 1.5),
+    "2031-2050"                         = c("5th percentile" = 1.2, "median" = 1.5, "95th percentile" = 1.9),
     "Medium-term (2041-2060)"           = c("5th percentile" = 1.4, "median" = 1.8, "95th percentile" = 2.3),
+    "2051-2070"                         = c("5th percentile" = 1.7, "median" = 2.2, "95th percentile" = 2.8),
+    "2061-2080"                         = c("5th percentile" = 1.9, "median" = 2.5, "95th percentile" = 3.3),
+    "2071-2090"                         = c("5th percentile" = 2.2, "median" = 2.9, "95th percentile" = 3.8),
     "Long-term (2081-2100)"             = c("5th percentile" = 2.5, "median" = 3.3, "95th percentile" = 4.3)
   ),
   "SSP5-8.5" = list(
+    "2011-2030"                         = c("5th percentile" = 0.8, "median" = 1.0, "95th percentile" = 1.2),
     "Current and near-term (2021-2040)" = c("5th percentile" = 1.0, "median" = 1.3, "95th percentile" = 1.6),
+    "2031-2050"                         = c("5th percentile" = 1.3, "median" = 1.7, "95th percentile" = 2.1),
     "Medium-term (2041-2060)"           = c("5th percentile" = 1.6, "median" = 2.1, "95th percentile" = 2.7),
+    "2051-2070"                         = c("5th percentile" = 1.9, "median" = 2.6, "95th percentile" = 3.3),
+    "2061-2080"                         = c("5th percentile" = 2.2, "median" = 3.0, "95th percentile" = 4.0),
+    "2071-2090"                         = c("5th percentile" = 2.6, "median" = 3.5, "95th percentile" = 4.7),
     "Long-term (2081-2100)"             = c("5th percentile" = 3.0, "median" = 4.1, "95th percentile" = 5.4)
   )
 )
 
 SCENARIO_OPTIONS <- c(names(TEMPERATURE_PROJECTIONS), "user specified degrees of global warming")
-TIME_HORIZON_OPTIONS <- c("Current and near-term (2021-2040)", "Medium-term (2041-2060)", "Long-term (2081-2100)")
+TIME_HORIZON_OPTIONS <- c("2011-2030", "Current and near-term (2021-2040)", "2031-2050",
+                           "Medium-term (2041-2060)", "2051-2070", "2061-2080", "2071-2090",
+                           "Long-term (2081-2100)")
 WARMING_UNCERTAINTY_OPTIONS <- c("5th percentile (low)", "median", "95th percentile (high)")
 .WARMING_UNCERTAINTY_KEY <- c(
   "5th percentile (low)" = "5th percentile",
@@ -669,4 +714,77 @@ compute_summary <- function(ifd, duration_label, target_aep_label,
     equivalent_historical_ari_years = equiv_ari,
     equivalent_historical_aep_label = equiv_label
   )
+}
+
+# ---------------------------------------------------------------------------
+# Multi-site export: one SUMMARY RESULTS row per loaded site
+# ---------------------------------------------------------------------------
+
+.EXPORT_COLUMNS <- c(
+  "site", "duration", "target_aep",
+  "historical_depth_mm", "projected_depth_mm", "percent_change_pct",
+  "equivalent_historical_aep", "degrees_of_warming_c", "rate_of_change_pct_per_degree",
+  "multiplier", "source_files", "error"
+)
+
+#' Compute the SUMMARY RESULTS row for every site in a batch registry's
+#' $entries (see build_ifd_registry), for one shared set of climate/
+#' duration/target inputs -- these are exactly the "3. Climate change
+#' scenario" and "4. Storm & result" controls in the app, applied across
+#' every loaded site at once rather than just the one selected in "2. Site".
+#'
+#' A site whose own data can't produce a result for these inputs (e.g. it
+#' doesn't have the selected storm duration, or has no column for the
+#' selected target AEP) gets a row with NA result columns and a message in
+#' `error`, rather than aborting the whole export -- so one awkward site
+#' out of hundreds doesn't block exporting the rest.
+#'
+#' Returns a data.frame, one row per entry, sorted by site label (matching
+#' the Site dropdown's own alphabetical order).
+compute_summary_table <- function(entries, duration_label, target_aep_label,
+                                    scenario, time_horizon, warming_uncertainty,
+                                    rate_uncertainty, user_degrees = NULL) {
+  if (length(entries) == 0) {
+    empty <- as.data.frame(matrix(character(0), nrow = 0, ncol = length(.EXPORT_COLUMNS)))
+    colnames(empty) <- .EXPORT_COLUMNS
+    return(empty)
+  }
+
+  rows <- lapply(entries, function(e) {
+    res <- tryCatch(
+      compute_summary(
+        e$ifd,
+        duration_label = duration_label,
+        target_aep_label = target_aep_label,
+        scenario = scenario,
+        time_horizon = time_horizon,
+        warming_uncertainty = warming_uncertainty,
+        rate_uncertainty = rate_uncertainty,
+        user_degrees = user_degrees
+      ),
+      error = function(err) err
+    )
+    if (inherits(res, "error")) {
+      data.frame(
+        site = e$label, duration = duration_label, target_aep = target_aep_label,
+        historical_depth_mm = NA_real_, projected_depth_mm = NA_real_,
+        percent_change_pct = NA_real_, equivalent_historical_aep = NA_character_,
+        degrees_of_warming_c = NA_real_, rate_of_change_pct_per_degree = NA_real_,
+        multiplier = NA_real_, source_files = e$source_file,
+        error = conditionMessage(res), stringsAsFactors = FALSE
+      )
+    } else {
+      data.frame(
+        site = e$label, duration = res$duration_label, target_aep = res$target_aep_label,
+        historical_depth_mm = res$historical_depth_mm, projected_depth_mm = res$projected_depth_display_mm,
+        percent_change_pct = res$percent_change_display, equivalent_historical_aep = res$equivalent_historical_aep_label,
+        degrees_of_warming_c = res$degrees_of_warming, rate_of_change_pct_per_degree = res$rate_of_change_pct,
+        multiplier = round(res$multiplier, 3), source_files = e$source_file,
+        error = "", stringsAsFactors = FALSE
+      )
+    }
+  })
+
+  out <- do.call(rbind, rows)
+  out[order(out$site), , drop = FALSE]
 }
