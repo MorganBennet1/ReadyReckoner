@@ -176,6 +176,88 @@ for (nm in names(big_ok)) {
   cat(sprintf("%s merge: %s\n", if (ok) "OK  " else "FAIL", nm))
 }
 
+## Exporting one SUMMARY RESULTS row per loaded site (compute_summary_table),
+## for the "export all sites" download button. Uses one real site (the
+## Zutic merge from above) plus a deliberately broken synthetic "site" with
+## no "24 hour" duration in its data, to confirm one bad site produces an
+## error row rather than aborting the whole export.
+broken_ifd <- list(
+  location_label = "Broken Test Site", latitude = NA_real_, longitude = NA_real_,
+  columns = ifd$columns, durations = c("1 min"), duration_minutes = c(1),
+  depths = matrix(ifd$depths["1 min", ], nrow = 1, dimnames = list("1 min", ifd$columns))
+)
+export_entries <- list(
+  list(label = "Zutic M & A Poultry", ifd = site$ifd, source_file = "depths_*.csv (3 files)"),
+  list(label = "Broken Test Site", ifd = broken_ifd, source_file = "synthetic.csv")
+)
+export_df <- compute_summary_table(
+  export_entries, duration_label = "24 hour", target_aep_label = "1 in 100",
+  scenario = "SSP3-7.0", time_horizon = "Medium-term (2041-2060)",
+  warming_uncertainty = "median", rate_uncertainty = "Central (median)"
+)
+export_checks <- c(
+  "2 rows, one per site" = nrow(export_df) == 2,
+  "sorted alphabetically by site" = identical(export_df$site, sort(export_df$site)),
+  "good site: historical depth == 121 mm, no error" = {
+    r <- export_df[export_df$site == "Zutic M & A Poultry", ]
+    isTRUE(all.equal(r$historical_depth_mm, 121)) && identical(r$error, "")
+  },
+  "broken site: NA result columns and a non-empty error message" = {
+    r <- export_df[export_df$site == "Broken Test Site", ]
+    is.na(r$historical_depth_mm) && is.na(r$projected_depth_mm) && nzchar(r$error)
+  },
+  "empty registry exports a header-only (0-row) table" = nrow(compute_summary_table(
+    list(), duration_label = "24 hour", target_aep_label = "1 in 100",
+    scenario = "SSP3-7.0", time_horizon = "Medium-term (2041-2060)",
+    warming_uncertainty = "median", rate_uncertainty = "Central (median)"
+  )) == 0
+)
+for (nm in names(export_checks)) {
+  ok <- isTRUE(export_checks[[nm]])
+  all_ok <- all_ok && ok
+  cat(sprintf("%s export: %s\n", if (ok) "OK  " else "FAIL", nm))
+}
+
+# --- Expanded time horizons (5 new rolling 20-year windows added 2026-09-17,
+# derived from the IPCC AR6 WG1 assessed GSAT projections dataset) ---
+expected_periods <- c("2011-2030", "Current and near-term (2021-2040)", "2031-2050",
+                       "Medium-term (2041-2060)", "2051-2070", "2061-2080", "2071-2090",
+                       "Long-term (2081-2100)")
+horizon_checks <- c(
+  "TIME_HORIZON_OPTIONS has all 8 periods in chronological order" =
+    identical(TIME_HORIZON_OPTIONS, expected_periods),
+  "every scenario has all 8 periods defined" =
+    all(vapply(TEMPERATURE_PROJECTIONS, function(p) identical(sort(names(p)), sort(expected_periods)), logical(1))),
+  "ARR's 3 originally-published periods are untouched (spot-check the two closest to a rounding boundary)" =
+    isTRUE(all.equal(unname(TEMPERATURE_PROJECTIONS[["SSP2-4.5"]][["Long-term (2081-2100)"]]["5th percentile"]), 1.8)) &&
+    isTRUE(all.equal(unname(TEMPERATURE_PROJECTIONS[["SSP5-8.5"]][["Long-term (2081-2100)"]]["5th percentile"]), 3.0)),
+  "every (scenario, period) has 5th <= median <= 95th" =
+    all(unlist(lapply(TEMPERATURE_PROJECTIONS, function(p) lapply(p, function(v) v[["5th percentile"]] <= v["median"] && v["median"] <= v[["95th percentile"]])))),
+  "every new period computes a full summary without error, for every scenario" = {
+    new_periods <- setdiff(expected_periods, c("Current and near-term (2021-2040)", "Medium-term (2041-2060)", "Long-term (2081-2100)"))
+    ok <- TRUE
+    for (scen in names(TEMPERATURE_PROJECTIONS)) {
+      for (period in new_periods) {
+        res <- tryCatch(
+          compute_summary(ifd, scenario = scen, time_horizon = period, warming_uncertainty = "median",
+                           rate_uncertainty = "Central (median)", duration_label = "24 hour", target_aep_label = "1 in 100"),
+          error = function(e) e)
+        if (inherits(res, "error")) ok <- FALSE
+      }
+    }
+    ok
+  },
+  "higher-emission scenarios warm more by 2081-2100 than lower ones (physical sanity check)" = {
+    m <- function(scen) unname(TEMPERATURE_PROJECTIONS[[scen]][["Long-term (2081-2100)"]]["median"])
+    m("SSP1-2.6") < m("SSP2-4.5") && m("SSP2-4.5") < m("SSP3-7.0") && m("SSP3-7.0") < m("SSP5-8.5")
+  }
+)
+for (nm in names(horizon_checks)) {
+  ok <- isTRUE(horizon_checks[[nm]])
+  all_ok <- all_ok && ok
+  cat(sprintf("%s time horizons: %s\n", if (ok) "OK  " else "FAIL", nm))
+}
+
 if (n_pass < length(cases) || !user_degrees_error || !all_ok) {
   quit(status = 1)
 }
