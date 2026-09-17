@@ -112,7 +112,10 @@ ui <- fluidPage(
       hr(),
       h5("4. Storm & result"),
       uiOutput("duration_select"),
-      selectInput("target_aep", "Interpret results for AEP of", choices = AEP_TARGET_OPTIONS, selected = "1 in 100")
+      selectInput("target_aep", "Interpret results for AEP of", choices = AEP_TARGET_OPTIONS, selected = "1 in 100"),
+      hr(),
+      h5("5. Export"),
+      uiOutput("export_section")
     ),
     mainPanel(
       width = 8,
@@ -190,19 +193,33 @@ server <- function(input, output, session) {
     selectInput("duration", "Critical storm duration", choices = ifd$durations, selected = default)
   })
 
-  result <- reactive({
-    req(input$duration, input$target_aep, input$scenario, input$rate_uncertainty)
-    ifd <- selected_ifd()
+  # Resolve the "user specified degrees of global warming" special case once,
+  # shared between the single-site result() below and the all-sites export
+  # further down, so both apply climate inputs identically.
+  climate_args <- reactive({
     is_user_specified <- identical(input$scenario, "user specified degrees of global warming")
-    compute_summary(
-      ifd,
-      duration_label = input$duration,
-      target_aep_label = input$target_aep,
+    list(
       scenario = input$scenario,
       time_horizon = if (is_user_specified) "Medium-term (2041-2060)" else input$time_horizon,
       warming_uncertainty = if (is_user_specified) "median" else input$warming_uncertainty,
       rate_uncertainty = input$rate_uncertainty,
       user_degrees = if (is_user_specified) input$user_degrees else NULL
+    )
+  })
+
+  result <- reactive({
+    req(input$duration, input$target_aep, input$scenario, input$rate_uncertainty)
+    ifd <- selected_ifd()
+    ca <- climate_args()
+    compute_summary(
+      ifd,
+      duration_label = input$duration,
+      target_aep_label = input$target_aep,
+      scenario = ca$scenario,
+      time_horizon = ca$time_horizon,
+      warming_uncertainty = ca$warming_uncertainty,
+      rate_uncertainty = ca$rate_uncertainty,
+      user_degrees = ca$user_degrees
     )
   })
 
@@ -257,6 +274,49 @@ server <- function(input, output, session) {
       )
     )
   })
+
+  output$export_section <- renderUI({
+    reg <- registry()
+    n <- length(reg$entries)
+    if (n == 0) {
+      return(p("Load at least one site to enable export.", class = "muted"))
+    }
+    tagList(
+      downloadButton("export_all", sprintf("Export all %d site%s (CSV)", n, if (n == 1) "" else "s")),
+      p(
+        "One row per loaded site, using the scenario / time horizon / ",
+        "uncertainty settings above and the storm duration and target AEP ",
+        "selected here. A site that doesn't have the selected duration gets ",
+        "a row with an error message instead of blocking the rest.",
+        class = "muted"
+      )
+    )
+  })
+
+  output$export_all <- downloadHandler(
+    filename = function() {
+      slug <- function(x) gsub("[^A-Za-z0-9]+", "", x)
+      sprintf(
+        "arr_ready_reckoner_%s_%s_%s.csv",
+        slug(input$duration), slug(input$target_aep), format(Sys.Date(), "%Y%m%d")
+      )
+    },
+    content = function(file) {
+      reg <- registry()
+      ca <- climate_args()
+      df <- compute_summary_table(
+        reg$entries,
+        duration_label = input$duration,
+        target_aep_label = input$target_aep,
+        scenario = ca$scenario,
+        time_horizon = ca$time_horizon,
+        warming_uncertainty = ca$warming_uncertainty,
+        rate_uncertainty = ca$rate_uncertainty,
+        user_degrees = ca$user_degrees
+      )
+      write.csv(df, file, row.names = FALSE)
+    }
+  )
 }
 
 shinyApp(ui, server)
